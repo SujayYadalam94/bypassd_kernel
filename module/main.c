@@ -34,11 +34,11 @@ static int alloc_cq(struct bypassd_dev *dev_entry, u16 qid,
      * is attached to the request.
      */
     memset(&c, 0, sizeof(c));
-    c.create_cq.opcode = nvme_admin_create_cq;
-    c.create_cq.prp1 = cpu_to_le64(nvmeq->cq_dma_addr);
-    c.create_cq.cqid = cpu_to_le16(qid);
-    c.create_cq.qsize = cpu_to_le16(nvmeq->q_depth - 1);
-    c.create_cq.cq_flags = cpu_to_le16(flags);
+    c.create_cq.opcode     = nvme_admin_create_cq;
+    c.create_cq.prp1       = cpu_to_le64(nvmeq->cq_dma_addr);
+    c.create_cq.cqid       = cpu_to_le16(qid);
+    c.create_cq.qsize      = cpu_to_le16(nvmeq->q_depth - 1);
+    c.create_cq.cq_flags   = cpu_to_le16(flags);
     c.create_cq.irq_vector = 0;
 
     return nvme_submit_sync_cmd(ndev->ctrl.admin_q, &c, NULL, 0);
@@ -51,30 +51,30 @@ static int alloc_sq(struct bypassd_dev *dev_entry, u16 qid,
     int flags = NVME_QUEUE_PHYS_CONTIG;
 
     memset(&c, 0, sizeof(c));
-    c.create_sq.opcode = nvme_admin_create_sq;
-    c.create_sq.prp1 = cpu_to_le64(nvmeq->sq_dma_addr);
-    c.create_sq.sqid = cpu_to_le16(qid);
-    c.create_sq.qsize = cpu_to_le16(nvmeq->q_depth - 1);
+    c.create_sq.opcode   = nvme_admin_create_sq;
+    c.create_sq.prp1     = cpu_to_le64(nvmeq->sq_dma_addr);
+    c.create_sq.sqid     = cpu_to_le16(qid);
+    c.create_sq.qsize    = cpu_to_le16(nvmeq->q_depth - 1);
     c.create_sq.sq_flags = cpu_to_le16(flags);
-    c.create_sq.cqid = cpu_to_le16(qid);
+    c.create_sq.cqid     = cpu_to_le16(qid);
 
     return nvme_submit_sync_cmd(ndev->ctrl.admin_q, &c, NULL, 0);
 }
 
 static struct nvme_queue *bypassd_alloc_queue(struct bypassd_dev *dev_entry,
                 int qid, int depth) {
-    struct nvme_dev *ndev = dev_entry->ndev;
+    struct nvme_dev   *ndev = dev_entry->ndev;
     struct nvme_queue *nvmeq;
     int ret;
 
     nvmeq = kzalloc(sizeof(*nvmeq), GFP_KERNEL);
     if(!nvmeq) return NULL;
 
-    nvmeq->sqes = 6;
+    nvmeq->sqes    = 6;
     nvmeq->q_depth = depth;
-    nvmeq->dev = ndev;
+    nvmeq->dev     = ndev;
     // Allocate DMA memory for CQ
-    nvmeq->cqes = dma_alloc_coherent(&dev_entry->pdev->dev, CQ_SIZE(depth),
+    nvmeq->cqes    = dma_alloc_coherent(&dev_entry->pdev->dev, CQ_SIZE(depth),
                             &nvmeq->cq_dma_addr, GFP_KERNEL);
     if(!nvmeq->cqes) {
         pr_err("[bypassd]: No memory for CQ allocation\n");
@@ -97,10 +97,10 @@ static struct nvme_queue *bypassd_alloc_queue(struct bypassd_dev *dev_entry,
     nvmeq->dev = ndev;
     spin_lock_init(&nvmeq->sq_lock);
     spin_lock_init(&nvmeq->cq_poll_lock);
-    nvmeq->cq_head = 0;
+    nvmeq->cq_head  = 0;
     nvmeq->cq_phase = 1;
-    nvmeq->q_db = &ndev->dbs[qid * 2 * ndev->db_stride];
-    nvmeq->qid = qid;
+    nvmeq->q_db     = &ndev->dbs[qid * 2 * ndev->db_stride];
+    nvmeq->qid      = qid;
 
     // Register CQ with device
     ret = alloc_cq(dev_entry, qid, nvmeq);
@@ -118,7 +118,7 @@ static struct nvme_queue *bypassd_alloc_queue(struct bypassd_dev *dev_entry,
         goto free_sqdma;
     }
 
-    nvmeq->sq_tail = 0;
+    nvmeq->sq_tail      = 0;
     nvmeq->last_sq_tail = 0;
     memset((void *)nvmeq->cqes, 0, CQ_SIZE(nvmeq->q_depth));
     return nvmeq;
@@ -134,35 +134,36 @@ free_nvmeq:
     return NULL;
 }
 
+// This function maps the created queues to userspace
 static void* bypassd_map_to_userspace(struct bypassd_dev *dev_entry,
                 struct nvme_queue *nvmeq, int type) { 
-    struct nvme_dev *ndev = dev_entry->ndev;
-    struct pci_dev *pdev;
-    unsigned long addr;
-    void *cpu_addr;
-    dma_addr_t dma_addr;
+    struct nvme_dev       *ndev = dev_entry->ndev;
+    struct pci_dev        *pdev;
+    unsigned long         addr;
+    void                  *cpu_addr;
+    dma_addr_t            dma_addr;
     struct vm_area_struct *vma, *prev;
-    struct rb_node **rb_link, *rb_parent;
-    int vm_len;
-    int ret = 0;
+    struct rb_node        **rb_link, *rb_parent;
+    int                   vm_len;
+    int                   ret = 0;
 
     switch(type) {
         case MAP_SQ:
-            vm_len = SQ_SIZE(ndev->q_depth);
+            vm_len   = SQ_SIZE(ndev->q_depth);
             cpu_addr = nvmeq->sq_cmds;
             dma_addr = nvmeq->sq_dma_addr;
             break;
 
         case MAP_CQ:
-            vm_len = CQ_SIZE(ndev->q_depth);
+            vm_len   = CQ_SIZE(ndev->q_depth);
             cpu_addr = (void *)nvmeq->cqes;
             dma_addr = nvmeq->cq_dma_addr;
             break;
 
         case MAP_DB:
-            vm_len = PAGE_SIZE;
+            vm_len   = PAGE_SIZE;
             cpu_addr = ndev->dbs;
-            pdev = to_pci_dev(&dev_entry->pdev->dev);
+            pdev     = to_pci_dev(&dev_entry->pdev->dev);
             dma_addr = (pci_resource_start(pdev, 0) + PAGE_SIZE) >> PAGE_SHIFT;
             break;
 
@@ -175,8 +176,8 @@ static void* bypassd_map_to_userspace(struct bypassd_dev *dev_entry,
      *       but if dma_alloc_from_dev_coherent is called, then get_order(size)
      */
     vm_len = PAGE_ALIGN(vm_len);
-    addr = get_unmapped_area(NULL, 0, vm_len, 0, 0);
-    ret = find_vma_links(current->mm, addr, addr + vm_len, &prev, &rb_link, &rb_parent);
+    addr   = get_unmapped_area(NULL, 0, vm_len, 0, 0);
+    ret    = find_vma_links(current->mm, addr, addr + vm_len, &prev, &rb_link, &rb_parent);
     if (ret != 0) {
         return NULL;
     }
@@ -184,9 +185,9 @@ static void* bypassd_map_to_userspace(struct bypassd_dev *dev_entry,
     if (!vma) {
         return NULL;
     }
-    vma->vm_start = addr;
-    vma->vm_end = addr + vm_len;
-    vma->vm_flags = VM_READ | VM_WRITE | VM_MAYWRITE | VM_MAYREAD | VM_SHARED | VM_MAYSHARE;
+    vma->vm_start     = addr;
+    vma->vm_end       = addr + vm_len;
+    vma->vm_flags     = VM_READ | VM_WRITE | VM_MAYWRITE | VM_MAYREAD | VM_SHARED | VM_MAYSHARE;
     vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
     vma->vm_pgoff = 0;
     if (type == MAP_DB) {
@@ -219,7 +220,7 @@ static int delete_queue(struct bypassd_dev *dev_entry, u8 opcode, u16 qid) {
 
     memset(&c, 0, sizeof(c));
     c.delete_queue.opcode = opcode;
-    c.delete_queue.qid = cpu_to_le16(qid);
+    c.delete_queue.qid    = cpu_to_le16(qid);
 
     return nvme_submit_sync_cmd(ndev->ctrl.admin_q, &c, NULL, 0);
 }
@@ -227,7 +228,7 @@ static int delete_queue(struct bypassd_dev *dev_entry, u8 opcode, u16 qid) {
 static int __bypassd_delete_queue_pair(struct bypassd_ns *ns_entry, int qid) {
     struct bypassd_dev *dev_entry = ns_entry->bypassd_dev_entry;
     struct bypassd_queue_pair *queue_pair;
-    struct nvme_queue *nvmeq;
+    struct nvme_queue         *nvmeq;
 
     spin_lock(&dev_entry->ctrl_lock);
 
@@ -275,7 +276,7 @@ static int bypassd_get_ns_info(struct bypassd_ns *ns_entry,
             struct bypassd_ns_info  __user *__ns_info) {
     struct bypassd_ns_info ns_info;
 
-    ns_info.ns_id = ns_entry->ns->head->ns_id;
+    ns_info.ns_id     = ns_entry->ns->head->ns_id;
     ns_info.lba_start = ns_entry->start_sect;
     ns_info.lba_shift = ns_entry->ns->lba_shift;
 
@@ -286,17 +287,17 @@ static int bypassd_get_ns_info(struct bypassd_ns *ns_entry,
 static int bypassd_setup_queue_pair(struct bypassd_ns *ns_entry,
                 struct bypassd_user_queue_info __user *__queue_info) {
     struct bypassd_dev *dev_entry = ns_entry->bypassd_dev_entry;
-    struct bypassd_queue_pair *queue_pair;
+    struct bypassd_queue_pair     *queue_pair;
     struct bypassd_user_queue_info queue_info;
-    unsigned int queue_count;
-    int result;
-    int err;
-    int qid;
+    unsigned int                   queue_count;
+    int                            result;
+    int                            err;
+    int                            qid;
 
     spin_lock(&dev_entry->ctrl_lock);
 
     queue_count = dev_entry->ndev->ctrl.queue_count + (++dev_entry->num_user_queue);
-    result = set_queue_count(dev_entry, queue_count, &err);
+    result      = set_queue_count(dev_entry, queue_count, &err);
     if (result < 0) {
         pr_err("[bypassd]: Error on set queue count\n");
         dev_entry->num_user_queue--;
@@ -345,8 +346,8 @@ static int bypassd_setup_queue_pair(struct bypassd_ns *ns_entry,
         pr_err("[bypassd]: Weird error! Cannot map doorbell.\n");
         goto free_nvmeq;
     }
-    queue_info.qid = qid;
-    queue_info.q_depth = dev_entry->ndev->q_depth;
+    queue_info.qid       = qid;
+    queue_info.q_depth   = dev_entry->ndev->q_depth;
     queue_info.db_stride = dev_entry->ndev->db_stride;
 
     spin_unlock(&dev_entry->ctrl_lock);
@@ -385,8 +386,8 @@ static int bypassd_get_user_buf(struct bypassd_ns *ns_entry, void __user *__buf)
 
     copy_from_user(&buf, __buf, sizeof(buf));
 
-    flags = FOLL_WRITE;
-    pages = kvmalloc_array(buf.nr_pages, sizeof(struct page *),
+    flags         = FOLL_WRITE;
+    pages         = kvmalloc_array(buf.nr_pages, sizeof(struct page *),
                         GFP_KERNEL);
     dma_addr_list = kmalloc (sizeof(__u64) * buf.nr_pages, GFP_KERNEL);
 
@@ -401,8 +402,8 @@ static int bypassd_get_user_buf(struct bypassd_ns *ns_entry, void __user *__buf)
     buf.nr_pages = ret;
 
     for (i=0; i<ret; ++i) {
-        phys = page_to_phys(pages[i]);
-        dma_addr_list[i] = (dma_addr_t)phys;
+        phys              = page_to_phys(pages[i]);
+        dma_addr_list[i]  = (dma_addr_t)phys;
         dma_addr_list[i] -= ((dma_addr_t)dev_entry->pdev->dev.dma_pfn_offset << PAGE_SHIFT);
         if (dma_addr_list[i] == 0) {
             pr_err("[bypassd]: Invalid page address while allocating DMA pages.\n");
@@ -437,9 +438,9 @@ static int bypassd_put_user_buf(struct bypassd_ns *ns_entry, void __user *__buf)
     pages = kvmalloc_array(buf.nr_pages, sizeof(struct page *), GFP_KERNEL);
 
     for (i=0; i<buf.nr_pages; ++i) {
-        phys = (phys_addr_t)dma_addr_list[i];
-        phys += (dma_addr_t)dev_entry->pdev->dev.dma_pfn_offset << PAGE_SHIFT;
-        pfn = phys >> PAGE_SHIFT;
+        phys     = (phys_addr_t)dma_addr_list[i];
+        phys    += (dma_addr_t)dev_entry->pdev->dev.dma_pfn_offset << PAGE_SHIFT;
+        pfn      = phys >> PAGE_SHIFT;
         pages[i] = pfn_to_page(pfn);
         if (!pages[i]) {
             pr_err("[bypassd]: Can't find DMA page for freeing.\n");
@@ -459,9 +460,9 @@ static int bypassd_get_buf_addr(struct bypassd_ns *ns_entry, void __user *__buf)
     struct bypassd_user_buf buf;
 
     unsigned long vaddr, start_addr;
-    int ret = 0;
-    int i;
-    u64 *pfnList;
+    u64          *pfnList;
+    int           ret = 0;
+    int           i;
 
     pgd_t *pgd;
     p4d_t *p4d;
@@ -573,16 +574,16 @@ static const struct file_operations bypassd_ns_fops = {
 
 static int find_nvme_devices(void) {
     struct bypassd_dev *dev_entry;
-    struct pci_dev *pdev = NULL;
-    struct nvme_dev *ndev;
-    struct nvme_ns *ns;
+    struct pci_dev     *pdev = NULL;
+    struct nvme_dev    *ndev;
+    struct nvme_ns     *ns;
 
-    struct bypassd_ns *ns_entry;
+    struct bypassd_ns    *ns_entry;
     struct disk_part_iter piter;
-    struct hd_struct *part;
+    struct hd_struct     *part;
 
     char dev_name[32];
-    int i;
+    int  i;
 
     while ((pdev = pci_get_class(PCI_CLASS_STORAGE_EXPRESS, pdev))) {
         ndev = pci_get_drvdata(pdev);
@@ -672,7 +673,7 @@ static int __init bypassd_init(void)
 static void __exit bypassd_exit(void)
 {
     struct bypassd_dev *dev_entry, *dev_next;
-    struct bypassd_ns *ns_entry, *ns_next;
+    struct bypassd_ns  *ns_entry, *ns_next;
     pr_info("[bypassd]: Exiting module\n");
 
     list_for_each_entry_safe(dev_entry, dev_next, &bypassd_dev_list, list) {
