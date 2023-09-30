@@ -655,7 +655,7 @@ static int __init bypassd_init(void)
         return -1;
     }
 
-    bypassd_proc_root = proc_mkdir("swiftcore", NULL);
+    bypassd_proc_root = proc_mkdir("bypassd", NULL);
     if (!bypassd_proc_root) {
         pr_err("[bypassd]: Couldn't create proc entry\n");
         return -1;
