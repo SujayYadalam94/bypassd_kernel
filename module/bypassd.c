@@ -17,7 +17,7 @@
 #include <linux/string.h>
 #include <linux/types.h>
 
-#include "main.h"
+#include "bypassd.h"
 #include "linux.h"
 
 /*
