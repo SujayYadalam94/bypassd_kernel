@@ -61,7 +61,25 @@ static int alloc_sq(struct bypassd_dev *dev_entry, u16 qid,
     return nvme_submit_sync_cmd(ndev->ctrl.admin_q, &c, NULL, 0);
 }
 
-static struct nvme_queue *bypassd_alloc_queue(struct bypassd_dev *dev_entry,
+static int nvme_set_max_queue_count(struct bypassd_dev *dev_entry) {
+    unsigned int queue_count = 0;
+    unsigned int max_user_queues = MAX_USER_QUEUES;
+    int          result;
+    int          err;
+
+    queue_count = dev_entry->ndev->ctrl.queue_count + max_user_queues;
+    result      = set_queue_count(dev_entry, queue_count, &err);
+    if (result < 0) {
+        pr_err("[bypassd]: Error on set queue count\n");
+        return -ENOSPC;
+    } else if (result == 0 && err == 6) { //If queue count set to other value
+        max_user_queues = get_queue_count(dev_entry);
+    }
+
+    return max_user_queues;
+}
+
+static struct nvme_queue *bypassd_alloc_nvmeq(struct bypassd_dev *dev_entry,
                 int qid, int depth) {
     struct nvme_dev   *ndev = dev_entry->ndev;
     struct nvme_queue *nvmeq;
@@ -231,10 +249,9 @@ static int __bypassd_delete_queue_pair(struct bypassd_ns *ns_entry, int qid) {
     struct nvme_queue         *nvmeq;
 
     spin_lock(&dev_entry->ctrl_lock);
-
     queue_pair = bypassd_get_queue_from_qid(ns_entry, qid);
+    spin_unlock(&dev_entry->ctrl_lock);
     if (!queue_pair) {
-        spin_unlock(&dev_entry->ctrl_lock);
         return -EINVAL;
     }
 
@@ -249,13 +266,14 @@ static int __bypassd_delete_queue_pair(struct bypassd_ns *ns_entry, int qid) {
     clear_bit(qid, dev_entry->queue_bmap);
     dev_entry->num_user_queue--;
 
+    spin_lock(&dev_entry->ctrl_lock);
     list_del(&queue_pair->list);
+    spin_unlock(&dev_entry->ctrl_lock);
 
     kfree(nvmeq);
     kfree(queue_pair);
 
     // TODO: delete VMAs
-    spin_unlock(&dev_entry->ctrl_lock);
 
     return 0;
 }
@@ -289,39 +307,25 @@ static int bypassd_setup_queue_pair(struct bypassd_ns *ns_entry,
     struct bypassd_dev *dev_entry = ns_entry->bypassd_dev_entry;
     struct bypassd_queue_pair     *queue_pair;
     struct bypassd_user_queue_info queue_info;
-    unsigned int                   queue_count;
-    int                            result;
-    int                            err;
     int                            qid;
 
     spin_lock(&dev_entry->ctrl_lock);
 
-    queue_count = dev_entry->ndev->ctrl.queue_count + (++dev_entry->num_user_queue);
-    result      = set_queue_count(dev_entry, queue_count, &err);
-    if (result < 0) {
-        pr_err("[bypassd]: Error on set queue count\n");
-        dev_entry->num_user_queue--;
+    if (dev_entry->num_user_queue >= dev_entry->max_user_queues) {
+        pr_err("[bypassd]: Max queue limit reached\n");
         spin_unlock(&dev_entry->ctrl_lock);
-        return -ENOSPC;
-    } else if (result == 0 && err == 6) { //If queue count set to other value
-        result = get_queue_count(dev_entry);
+        return -1;
     }
 
-    // TODO: On some SSD, we can set the queue count only once.
-    //       For example, Dell Ent SSD. We ignore this and proceed with creating queues
-    //if (result < queue_count) {
-        //pr_err("[bypassd]: Number of queues exceeded res=%d queue_count=%d\n", result, queue_count);
-    //    dev_entry->num_user_queue--;
-    //    spin_unlock(&dev_entry->ctrl_lock);
-    //    return -ENOSPC;
-    //}
-
-    queue_pair = kzalloc(sizeof(*queue_pair), GFP_KERNEL);
     qid = find_first_zero_bit(dev_entry->queue_bmap, 256);
     set_bit(qid, dev_entry->queue_bmap);
+    dev_entry->num_user_queue++;
+
+    spin_unlock(&dev_entry->ctrl_lock);
 
     // Allocate and create queues
-    queue_pair->nvmeq = bypassd_alloc_queue(dev_entry, qid, dev_entry->ndev->q_depth);
+    queue_pair = kzalloc(sizeof(*queue_pair), GFP_KERNEL);
+    queue_pair->nvmeq = bypassd_alloc_nvmeq(dev_entry, qid, dev_entry->ndev->q_depth);
     if (!queue_pair->nvmeq) {
         pr_err("Queue alloc failed\n");
         goto free_queue_pair;
@@ -329,7 +333,9 @@ static int bypassd_setup_queue_pair(struct bypassd_ns *ns_entry,
 
     // Owner is currently unused; Can be used to restrict number of queues per process
     queue_pair->owner = current->pid;
+    spin_lock(&dev_entry->ctrl_lock);
     list_add(&queue_pair->list, &ns_entry->queue_list);
+    spin_unlock(&dev_entry->ctrl_lock);
 
     // Map the queues to userspace
     queue_info.sq_addr = bypassd_map_to_userspace(dev_entry, queue_pair->nvmeq, MAP_SQ);
@@ -349,8 +355,6 @@ static int bypassd_setup_queue_pair(struct bypassd_ns *ns_entry,
     queue_info.qid       = qid;
     queue_info.q_depth   = dev_entry->ndev->q_depth;
     queue_info.db_stride = dev_entry->ndev->db_stride;
-
-    spin_unlock(&dev_entry->ctrl_lock);
 
     copy_to_user(__queue_info, &queue_info, sizeof(queue_info));
     return 0;
@@ -641,6 +645,8 @@ static int find_nvme_devices(void) {
             }
             disk_part_iter_exit(&piter);
         }
+
+        dev_entry->max_user_queues = nvme_set_max_queue_count(dev_entry);
     }
     return 0;
 }

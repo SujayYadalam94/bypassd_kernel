@@ -17,6 +17,8 @@
 #define SQ_SIZE(len) (len * sizeof(struct nvme_command))
 #define CQ_SIZE(len) (len * sizeof(struct nvme_completion))
 
+#define MAX_USER_QUEUES 128
+
 enum map_type {
     MAP_SQ, // Submission queue
     MAP_CQ, // Completion queue
@@ -31,6 +33,7 @@ struct bypassd_dev {
     spinlock_t ctrl_lock;
 
     unsigned int num_user_queue;
+    unsigned int max_user_queues;
     DECLARE_BITMAP(queue_bmap, 65536);
 
     struct list_head list;
